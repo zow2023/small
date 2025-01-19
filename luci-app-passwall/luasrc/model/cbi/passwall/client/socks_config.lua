@@ -1,10 +1,16 @@
 local api = require "luci.passwall.api"
 local appname = "passwall"
-local uci = api.libuci
-local has_singbox = api.finded_com("singbox")
-local has_xray = api.finded_com("xray")
 
 m = Map(appname)
+m.redirect = api.url()
+api.set_apply_on_parse(m)
+
+if not arg[1] or not m:get(arg[1]) then
+	luci.http.redirect(m.redirect)
+end
+
+local has_singbox = api.finded_com("singbox")
+local has_xray = api.finded_com("xray")
 
 local nodes_table = {}
 for k, e in ipairs(api.get_valid_nodes()) do
@@ -23,7 +29,7 @@ o.rmempty = false
 local auto_switch_tip
 local current_node = api.get_cache_var("socks_" .. arg[1])
 if current_node then
-	local n = uci:get_all(appname, current_node)
+	local n = m:get(current_node)
 	if n then
 		if tonumber(m:get(arg[1], "enable_autoswitch") or 0) == 1 then
 			if n then
@@ -44,7 +50,7 @@ o = s:option(Flag, "bind_local", translate("Bind Local"), translate("When select
 o.default = "0"
 
 local n = 1
-uci:foreach(appname, "socks", function(s)
+m.uci:foreach(appname, "socks", function(s)
 	if s[".name"] == section then
 		return false
 	end
@@ -124,6 +130,8 @@ for k, v in pairs(nodes_table) do
 	socks_node:value(v.id, v["remark"])
 end
 
-m:append(Template(appname .. "/socks_auto_switch/footer"))
+o = s:option(DummyValue, "btn", " ")
+o.template = appname .. "/socks_auto_switch/btn"
+o:depends("enable_autoswitch", true)
 
 return m

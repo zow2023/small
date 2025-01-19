@@ -19,8 +19,9 @@ local NO_LOGIC_LOG = var["-NO_LOGIC_LOG"]
 local TCP_NODE = var["-TCP_NODE"]
 local NFTFLAG = var["-NFTFLAG"]
 local REMOTE_FAKEDNS = var["-REMOTE_FAKEDNS"]
+local LOG_FILE = var["-LOG_FILE"]
 
-local uci = api.libuci
+local uci = api.uci
 local sys = api.sys
 local fs = api.fs
 local datatypes = api.datatypes
@@ -104,7 +105,7 @@ local setflag = (NFTFLAG == "1") and "inet@passwall@" or ""
 local only_global = (DEFAULT_MODE == "proxy" and CHNLIST == "0" and GFWLIST == "0") and 1
 
 config_lines = {
-	--"verbose",
+	LOG_FILE ~= "/dev/null" and "verbose" or "",
 	"bind-addr 127.0.0.1",
 	"bind-port " .. LISTEN_PORT,
 	"china-dns " .. DNS_LOCAL,
@@ -157,11 +158,13 @@ end
 local file_vpslist = TMP_ACL_PATH .. "/vpslist"
 if not is_file_nonzero(file_vpslist) then
 	local f_out = io.open(file_vpslist, "w")
+	local written_domains = {}
 	uci:foreach(appname, "nodes", function(t)
 		local function process_address(address)
 			if address == "engage.cloudflareclient.com" then return end
-			if datatypes.hostname(address) then
+			if datatypes.hostname(address) and not written_domains[address] then
 				f_out:write(address .. "\n")
+				written_domains[address] = true
 			end
 		end
 		process_address(t.address)
@@ -270,7 +273,7 @@ if USE_PROXY_LIST == "1" and is_file_nonzero(file_proxy_host) then
 		"group proxylist",
 		"group-dnl " .. file_proxy_host,
 		"group-upstream " .. DNS_TRUST,
-		REMOTE_FAKEDNS ~= "1" and "group-ipset " .. table.concat(sets, ",") or nil
+		REMOTE_FAKEDNS ~= "1" and "group-ipset " .. table.concat(sets, ",") or ""
 	}
 	if NO_IPV6_TRUST == "1" then table.insert(tmp_lines, "no-ipv6 tag:proxylist") end
 	insert_array_after(config_lines, tmp_lines, "#--3")
@@ -292,7 +295,7 @@ if GFWLIST == "1" and is_file_nonzero(RULES_PATH .. "/gfwlist") then
 	end
 	tmp_lines = {
 		"gfwlist-file " .. RULES_PATH .. "/gfwlist",
-		REMOTE_FAKEDNS ~= "1" and "add-taggfw-ip " .. table.concat(sets, ",") or nil
+		REMOTE_FAKEDNS ~= "1" and "add-taggfw-ip " .. table.concat(sets, ",") or ""
 	}
 	if NO_IPV6_TRUST == "1" then table.insert(tmp_lines, "no-ipv6 tag:gfw") end
 	merge_array(config_lines, tmp_lines)
@@ -323,7 +326,7 @@ if CHNLIST ~= "0" and is_file_nonzero(RULES_PATH .. "/chnlist") then
 			"group chn_proxy",
 			"group-dnl " .. RULES_PATH .. "/chnlist",
 			"group-upstream " .. DNS_TRUST,
-			REMOTE_FAKEDNS ~= "1" and "group-ipset " .. table.concat(sets, ",") or nil
+			REMOTE_FAKEDNS ~= "1" and "group-ipset " .. table.concat(sets, ",") or ""
 		}
 		if NO_IPV6_TRUST == "1" then table.insert(tmp_lines, "no-ipv6 tag:chn_proxy") end
 		insert_array_after(config_lines, tmp_lines, "#--1")
@@ -448,7 +451,7 @@ if uci:get(appname, TCP_NODE, "protocol") == "_shunt" then
 			"group shuntlist",
 			"group-dnl " .. file_shunt_host,
 			"group-upstream " .. DNS_TRUST,
-			(not only_global and REMOTE_FAKEDNS == "1") and nil or ("group-ipset " .. table.concat(sets, ","))
+			(not only_global and REMOTE_FAKEDNS == "1") and "" or ("group-ipset " .. table.concat(sets, ","))
 		}
 		if NO_IPV6_TRUST == "1" then table.insert(tmp_lines, "no-ipv6 tag:shuntlist") end
 		insert_array_after(config_lines, tmp_lines, "#--2")

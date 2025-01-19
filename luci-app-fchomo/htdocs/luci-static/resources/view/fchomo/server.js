@@ -7,51 +7,17 @@
 
 'require fchomo as hm';
 
-function handleGenKey(option) {
-	var section_id = this.section.section;
-	var type = this.section.getOption('type').formvalue(section_id);
-	var widget = this.map.findElement('id', 'widget.cbid.fchomo.%s.%s'.format(section_id, option));
-	var password, required_method;
-
-	if (option === 'uuid' || option.match(/_uuid/))
-		required_method = 'uuid';
-	else if (type === 'shadowsocks')
-		required_method = this.section.getOption('shadowsocks_chipher')?.formvalue(section_id);
-
-	switch (required_method) {
-		/* NONE */
-		case 'none':
-			password = '';
-			break;
-		/* UUID */
-		case 'uuid':
-			password = hm.generateRand('uuid');
-			break;
-		/* DEFAULT */
-		default:
-			password = hm.generateRand('hex', 16);
-			break;
-	}
-	/* AEAD */
-	(function(length) {
-		if (length && length > 0)
-			password = hm.generateRand('base64', length);
-	}(hm.shadowsocks_cipher_length[required_method]));
-
-	return widget.value = password;
-}
-
 return view.extend({
-	load: function() {
+	load() {
 		return Promise.all([
 			uci.load('fchomo'),
 			hm.getFeatures()
 		]);
 	},
 
-	render: function(data) {
-		var dashboard_repo = uci.get(data[0], 'api', 'dashboard_repo'),
-		    features = data[1];
+	render(data) {
+		const dashboard_repo = uci.get(data[0], 'api', 'dashboard_repo');
+		const features = data[1];
 
 		let m, s, o;
 
@@ -60,15 +26,15 @@ return view.extend({
 
 		s = m.section(form.TypedSection);
 		s.render = function () {
-			poll.add(function () {
+			poll.add(function() {
 				return hm.getServiceStatus('mihomo-s').then((isRunning) => {
-					hm.updateStatus(hm, document.getElementById('_server_bar'), isRunning ? { dashboard_repo: dashboard_repo } : false, 'mihomo-s', true);
+					hm.updateStatus(document.getElementById('_server_bar'), isRunning ? { dashboard_repo: dashboard_repo } : false, 'mihomo-s', true);
 				});
 			});
 
 			return E('div', { class: 'cbi-section' }, [
 				E('p', [
-					hm.renderStatus(hm, '_server_bar', false, 'mihomo-s', true)
+					hm.renderStatus('_server_bar', false, 'mihomo-s', true)
 				])
 			]);
 		}
@@ -135,19 +101,8 @@ return view.extend({
 		o.depends({type: /^(http|socks|mixed|hysteria2)$/});
 		o.modalonly = true;
 
-		o = s.option(form.Value, 'password', _('Password'));
+		o = s.option(hm.GenValue, 'password', _('Password'));
 		o.password = true;
-		o.renderWidget = function() {
-			var node = form.Value.prototype.renderWidget.apply(this, arguments);
-
-			(node.querySelector('.control-group') || node).appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Generate'),
-				'click': ui.createHandlerFn(this, handleGenKey, this.option)
-			}, [ _('Generate') ]));
-
-			return node;
-		}
 		o.validate = L.bind(hm.validateAuthPassword, o);
 		o.rmempty = false;
 		o.depends({type: /^(http|socks|mixed|hysteria2)$/, username: /.+/});
@@ -179,20 +134,9 @@ return view.extend({
 		o.depends('type', 'hysteria2');
 		o.modalonly = true;
 
-		o = s.option(form.Value, 'hysteria_obfs_password', _('Obfuscate password'),
+		o = s.option(hm.GenValue, 'hysteria_obfs_password', _('Obfuscate password'),
 			_('Enabling obfuscation will make the server incompatible with standard QUIC connections, losing the ability to masquerade with HTTP/3.'));
 		o.password = true;
-		o.renderWidget = function() {
-			var node = form.Value.prototype.renderWidget.apply(this, arguments);
-
-			(node.querySelector('.control-group') || node).appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Generate'),
-				'click': ui.createHandlerFn(this, handleGenKey, this.option)
-			}, [ _('Generate') ]));
-
-			return node;
-		}
 		o.rmempty = false;
 		o.depends('type', 'hysteria');
 		o.depends({type: 'hysteria2', hysteria_obfs_type: /.+/});
@@ -213,39 +157,17 @@ return view.extend({
 		o.depends('type', 'shadowsocks');
 		o.modalonly = true;
 
-		o = s.option(form.Value, 'shadowsocks_password', _('Password'));
+		o = s.option(hm.GenValue, 'shadowsocks_password', _('Password'));
 		o.password = true;
-		o.renderWidget = function() {
-			var node = form.Value.prototype.renderWidget.apply(this, arguments);
-
-			(node.querySelector('.control-group') || node).appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Generate'),
-				'click': ui.createHandlerFn(this, handleGenKey, this.option)
-			}, [ _('Generate') ]));
-
-			return node;
-		}
 		o.validate = function(section_id, value) {
-			var encmode = this.section.getOption('shadowsocks_chipher').formvalue(section_id);
-			return hm.validateShadowsocksPassword.call(this, hm, encmode, section_id, value);
+			const encmode = this.section.getOption('shadowsocks_chipher').formvalue(section_id);
+			return hm.validateShadowsocksPassword.call(this, encmode, section_id, value);
 		}
 		o.depends({type: 'shadowsocks', shadowsocks_chipher: /.+/});
 		o.modalonly = true;
 
 		/* Tuic fields */
-		o = s.option(form.Value, 'uuid', _('UUID'));
-		o.renderWidget = function() {
-			var node = form.Value.prototype.renderWidget.apply(this, arguments);
-
-			(node.querySelector('.control-group') || node).appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Generate'),
-				'click': ui.createHandlerFn(this, handleGenKey, this.option)
-			}, [ _('Generate') ]));
-
-			return node;
-		}
+		o = s.option(hm.GenValue, 'uuid', _('UUID'));
 		o.rmempty = false;
 		o.validate = L.bind(hm.validateUUID, o);
 		o.depends('type', 'tuic');
@@ -281,18 +203,7 @@ return view.extend({
 		o.modalonly = true;
 
 		/* VMess fields */
-		o = s.option(form.Value, 'vmess_uuid', _('UUID'));
-		o.renderWidget = function() {
-			var node = form.Value.prototype.renderWidget.apply(this, arguments);
-
-			(node.querySelector('.control-group') || node).appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Generate'),
-				'click': ui.createHandlerFn(this, handleGenKey, this.option)
-			}, [ _('Generate') ]));
-
-			return node;
-		}
+		o = s.option(hm.GenValue, 'vmess_uuid', _('UUID'));
 		o.rmempty = false;
 		o.validate = L.bind(hm.validateUUID, o);
 		o.depends('type', 'vmess');
@@ -309,9 +220,9 @@ return view.extend({
 		o = s.option(form.Flag, 'tls', _('TLS'));
 		o.default = o.disabled;
 		o.validate = function(section_id, value) {
-			var type = this.section.getOption('type').formvalue(section_id);
-			var tls = this.section.getUIElement(section_id, 'tls').node.querySelector('input');
-			var tls_alpn = this.section.getUIElement(section_id, 'tls_alpn');
+			const type = this.section.getOption('type').formvalue(section_id);
+			let tls = this.section.getUIElement(section_id, 'tls').node.querySelector('input');
+			let tls_alpn = this.section.getUIElement(section_id, 'tls_alpn');
 
 			// Force enabled
 			if (['tuic', 'hysteria2'].includes(type)) {

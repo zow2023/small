@@ -12,6 +12,11 @@ export const PRESET_OUTBOUND = [
 	'PASS',
 	'COMPATIBLE'
 ];
+export const RULES_LOGICAL_TYPE = [
+	'AND',
+	'OR',
+	'NOT'
+];
 /* Global variables END */
 
 /* Utilities start */
@@ -34,8 +39,10 @@ export function yqRead(flags, command, filepath) {
 /* Utilities end */
 
 /* String helper start */
-export function isEmpty(res) {
-	return !res || res === 'nil' || (type(res) in ['array', 'object'] && length(res) === 0);
+export function isEmpty(res) {                                            // no false, 0, NaN
+	if (res == null || res in ['', 'nil']) return true;                   // null, '', 'nil'
+	if (type(res) in ['array', 'object']) return length(res) === 0;       // empty Array/Object
+	return false;
 };
 
 export function strToBool(str) {

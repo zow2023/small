@@ -1,6 +1,5 @@
 local api = require "luci.passwall2.api"
 local appname = api.appname
-local uci = api.uci
 local datatypes = api.datatypes
 local has_singbox = api.finded_com("singbox")
 local has_xray = api.finded_com("xray")
@@ -33,7 +32,7 @@ for k, v in pairs(nodes_table) do
 end
 
 local socks_list = {}
-uci:foreach(appname, "socks", function(s)
+m.uci:foreach(appname, "socks", function(s)
 	if s.enabled == "1" and s.node then
 		socks_list[#socks_list + 1] = {
 			id = "Socks_" .. s[".name"],
@@ -66,8 +65,7 @@ end
 
 m:append(Template(appname .. "/global/status"))
 
-local global_cfgid = uci:get_all(appname, "@global[0]")[".name"]
-
+local global_cfgid = m:get("@global[0]")[".name"]
 s = m:section(TypedSection, "global")
 s.anonymous = true
 s.addremove = false
@@ -150,7 +148,7 @@ if (has_singbox or has_xray) and #nodes_table > 0 then
 				type:depends({ __hide = true }) --不存在的依赖，即始终隐藏
 			end
 
-			uci:foreach(appname, "shunt_rules", function(e)
+			m.uci:foreach(appname, "shunt_rules", function(e)
 				local id = e[".name"]
 				local node_option = vid .. "-" .. id .. "_node"
 				if id and e.remarks then
@@ -339,10 +337,15 @@ o = s:taboption("DNS", Flag, "dns_redirect", translate("DNS Redirect"), translat
 o.default = "1"
 o.rmempty = false
 
-o = s:taboption("DNS", Button, "clear_ipset", translate("Clear IPSet"), translate("Try this feature if the rule modification does not take effect."))
+if (m:get("@global_forwarding[0]", "use_nft") or "0") == "1" then
+	o = s:taboption("DNS", Button, "clear_ipset", translate("Clear NFTSET"), translate("Try this feature if the rule modification does not take effect."))
+else
+	o = s:taboption("DNS", Button, "clear_ipset", translate("Clear IPSET"), translate("Try this feature if the rule modification does not take effect."))
+end
 o.inputstyle = "remove"
 function o.write(e, e)
-	luci.sys.call('[ -n "$(nft list sets 2>/dev/null | grep \"passwall2_\")" ] && sh /usr/share/passwall2/nftables.sh flush_nftset_reload || sh /usr/share/passwall2/iptables.sh flush_ipset_reload > /dev/null 2>&1 &')
+	m:set("@global[0]", "flush_set", "1")
+	api.uci_save(m.uci, appname, true, true)
 	luci.http.redirect(api.url("log"))
 end
 
@@ -400,7 +403,7 @@ o.rmempty = false
 o = s2:option(ListValue, "node", translate("Socks Node"))
 
 local n = 1
-uci:foreach(appname, "socks", function(s)
+m.uci:foreach(appname, "socks", function(s)
 	if s[".name"] == section then
 		return false
 	end

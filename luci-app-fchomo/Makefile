@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (C) 2024 Anya Lin <hukk1996@gmail.com>
+# Copyright (C) 2024-2025 Anya Lin <hukk1996@gmail.com>
 
 include $(TOPDIR)/rules.mk
 
@@ -12,7 +12,7 @@ LUCI_DEPENDS:= \
 	+firewall4 \
 	+kmod-inet-diag \
 	+kmod-nft-tproxy \
-	+yq +wget-ssl \
+	+yq +wget-ssl +coreutils-timeout \
 #	+ip-full +kmod-tun +dnsmasq-full \
 
 PKG_NAME:=luci-app-fchomo

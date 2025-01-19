@@ -66,53 +66,19 @@ class DNSAddress {
 class RulesEntry {
 	constructor(entry) {
 		this.input = entry || '';
-		var content = this.input;
-		this.subrule = content.split(',');
-		if (this.subrule.shift() === 'SUB-RULE') {
-			var subrule_payload = this.subrule.join(',').match(/^\(.*\)/);
-			if (subrule_payload) {
-				content = subrule_payload[0].slice(1, -1);
-				this.subrule = this.subrule.pop() || ' ';
-			} else {
-				content = this.subrule.join(',');
-				this.subrule = ' ';
-			}
-		} else
-			this.subrule = false;
-		this.rawparams = content.split(',');
-		this.type = this.rawparams.shift() || '';
-		var logical_payload, rawfactor;
-		(function(rawparams_typecuted) {
-			logical_payload = rawparams_typecuted.match(/^\(.*\)/);
-			if (logical_payload) {
-				rawfactor = logical_payload[0];
-				this.rawparams = rawparams_typecuted.replace(/^\(.*\),?/, '').split(',');
-			} else
-				rawfactor = this.rawparams.shift() || '';
-		}.call(this, this.rawparams.join(',')));
-		this.detour = this.rawparams.shift() || '';
-		if (this.type === 'MATCH')
-			this.detour = rawfactor;
+		try {
+			let content = JSON.parse(this.input.trim());
+			Object.keys(content).forEach(key => this[key] = content[key]);
+		} catch {}
 
-		this.payload = [];
-		if (logical_payload) { // ꓹ ႇ ❟
-			if (rawfactor.match(/^\(.*\)$/)) // LOGICAL_TPYE,()
-				rawfactor.slice(1, -1).split('ꓹ').forEach((payload) => { // U+A4F9
-					if (payload.match(/^\(.*\)$/)) { // (payload)
-						let arr = payload.slice(1, -1).split('‚'); // U+201A
-						this.payload.push({ type: arr[0] || '', factor: arr[1] || '' });
-					}
-				});
-		} else
-			this.payload[0] = { type: this.type, factor: rawfactor };
-
-		this.params = {};
-		if (this.rawparams.length > 0) {
-			this.rawparams.forEach((k) => {
-				this.params[k] = 'true';
-			});
-		}
-		this.rawparams = this.rawparams.join(',');
+		this.type ||= hm.rules_type[0][0];
+		this.payload ||= [
+			{type: hm.rules_type[0][0], factor: '', /* deny: false */},
+			//{type: 'DOMAIN-SUFFIX', factor: '.google.com', deny: true}
+		];
+		this.detour ||= hm.preset_outbound.full[0][0];
+		this.params ||= {/* src: false, no-resolve: true */};
+		this.subrule ||= false;
 	}
 
 	setKey(key, value) {
@@ -125,18 +91,25 @@ class RulesEntry {
 		return this.payload[n] || {};
 	}
 
-	setPayload(n, obj) {
+	getPayloads() {
+		return this.payload || [];
+	}
+
+	setPayload(n, obj, limit) {
 		this.payload[n] ||= {};
 
 		Object.keys(obj).forEach((key) => {
 			this.payload[n][key] = obj[key] || null;
 		});
 
+		if (limit)
+			this.payload.splice(limit);
+
 		return this
 	}
 
 	getParam(param) {
-		return this.params[param] || null;
+		return this.params?.[param] || null;
 	}
 
 	setParam(param, value) {
@@ -148,49 +121,89 @@ class RulesEntry {
 		return this
 	}
 
-	toString() {
-		var logical = hm.rules_logical_type.map(e => e[0] || e).includes(this.type),
-		    factor = '';
-		if (logical) {
-			let n = hm.rules_logical_payload_count[this.type] || 0;
-			factor = '(%s)'.format(this.payload.slice(0, n).map((payload) => {
-				return '(%s‚%s)'.format(payload.type || '', payload.factor || '');
-			}).join('ꓹ'));
+	_payloadStrategy(payload) {
+		// LOGIC_TYPE,((payload1),(payload2))
+		if (payload.factor === null || ['undefined', 'boolean', 'number', 'string'].includes(typeof(payload.factor))) {
+			return (payload.deny ? 'NOT,((%s))' : '%s').format([payload.type, payload.factor ?? ''].join(','));
+		} else if (payload.factor?.constructor === Array) {
+			return `${payload.type},(%s)`.format(payload.factor.map(p => `(${this._payloadStrategy(p)})`).join(','));
+		} else if (payload.factor?.constructor === Object) {
+			throw new Error(`Factor type cannot be an object: '${JSON.stringify(payload.factor)}'`);
 		} else
-			factor = this.payload[0].factor;
+			throw new Error(`Factor type is incorrect: '${payload.factor}'`);
+	}
 
-		if (this.subrule) {
-			return 'SUB-RULE,(%s),%s'.format([this.type, factor].join(','), this.subrule);
-		} else
-			if (this.type === 'MATCH') {
-				return [this.type, this.detour].join(',');
-			} else
-				return [this.type, factor, this.detour].concat(
-					['no-resolve', 'src'].filter(k => this.params[k])
+	_toMihomo(rule, logical) {
+		let payload = this._payloadStrategy(logical ? {type: rule.type, factor: rule.payload} : rule.payload[0]);
+
+		if (rule.subrule)
+			return 'SUB-RULE,(%s),%s'.format(payload, rule.subrule);
+		else
+			if (rule.type === 'MATCH')
+				return [rule.type, rule.detour].join(',');
+			else
+				return [payload, rule.detour].concat(
+					rule.params ? ['no-resolve', 'src'].filter(k => rule.params[k]) : []
 				).join(',');
+	}
+
+	toString(format) {
+		format ||= 'json';
+		let logical = hm.rules_logical_type.map(e => e[0] || e).includes(this.type);
+		let rule, factor, detour, params;
+
+		if (logical) {
+			let n = hm.rules_logical_payload_count[this.type] ? hm.rules_logical_payload_count[this.type].high : 0;
+			factor = this.payload.slice(0, n);
+		} else
+			factor = [ {...this.payload[0], ...{type: this.type}} ];
+
+		if (!this.subrule) {
+			detour = this.detour;
+			params = this.params;
+			if (this.type === 'MATCH')
+				factor = [{type: 'MATCH'}];
+		}
+
+		rule = hm.removeBlankAttrs({
+			type: this.type,
+			payload: factor,
+			detour: detour || null,
+			params: params || null,
+			subrule: this.subrule || null,
+		});
+
+		if (format === 'json')
+			return JSON.stringify(rule);
+		else if (format === 'mihomo')
+			return this._toMihomo(rule, logical);
+		else
+			throw new Error(`Unknown format: '${format}'`);
 	}
 }
 
-function strToFlag(string) {
-	if (!string)
+function boolToFlag(boolean) {
+	if (typeof(boolean) !== 'boolean')
 		return null;
 
-	switch(string) {
-	case 'true':
+	switch(boolean) {
+	case true:
 		return '1';
-	case 'false':
+	case false:
 		return '0';
 	default:
 		return null;
 	}
 }
-function flagToStr(flag) {
+function flagToBool(flag) {
 	if (!flag)
 		return null;
 
 	switch(flag) {
 	case '1':
-		return 'true';
+		return true;
+	case '0':
+		return false;
 	default:
 		return null;
 	}
@@ -198,26 +211,53 @@ function flagToStr(flag) {
 
 function renderPayload(s, total, uciconfig) {
 	// common payload
-	var initPayload = function(o, n, key, uciconfig) {
+	let initPayload = function(o, n, key, uciconfig) {
 		o.load = L.bind(function(n, key, uciconfig, section_id) {
 			return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayload(n)[key];
 		}, o, n, key, uciconfig);
 		o.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'entry');
+			let UIEl = this.section.getUIElement(section_id, 'entry');
 
 			let n = this.option.match(/^payload(\d+)_/)[1];
-			var newvalue = new RulesEntry(UIEl.getValue()).setPayload(n, {factor: value}).toString();
+			let rule = new RulesEntry(UIEl.getValue()).setPayload(n, {factor: value});
 
-			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
 		}
 		o.write = function() {};
 		o.rmempty = false;
 		o.modalonly = true;
 	}
+	let initDynamicPayload = function(o, n, key, uciconfig) {
+		o.allowduplicates = true;
+		o.load = L.bind(function(n, key, uciconfig, section_id) {
+			return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayloads().slice(n).map(e => e[key] ?? '');
+		}, o, n, key, uciconfig);
+		o.validate = function(section_id, value) {
+			value = this.formvalue(section_id);
+			let UIEl = this.section.getUIElement(section_id, 'entry');
+			let rule = new RulesEntry(UIEl.getValue());
 
-	var o, prefix;
-	for (var n=0; n<total; n++) {
+			let n = this.option.match(/^payload(\d+)_/)[1];
+			let limit = rule.getPayloads().length;
+			value.forEach((val) => {
+				rule.setPayload(n, {factor: val}); n++;
+			});
+			rule.setPayload(limit, {factor: null}, limit);
+
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
+
+			return true;
+		}
+		o.write = function() {};
+		o.rmempty = true;
+		o.modalonly = true;
+	}
+
+	let o, prefix;
+	// StaticList payload
+	for (let n=0; n<total; n++) {
 		prefix = `payload${n}_`;
 
 		o = s.option(form.ListValue, prefix + 'type', _('Type') + ` ${n+1}`);
@@ -226,18 +266,18 @@ function renderPayload(s, total, uciconfig) {
 			o.value.apply(o, res);
 		})
 		Object.keys(hm.rules_logical_payload_count).forEach((key) => {
-			if (n < hm.rules_logical_payload_count[key])
+			if (n < hm.rules_logical_payload_count[key].low)
 				o.depends('type', key);
 		})
 		initPayload(o, n, 'type', uciconfig);
 		o.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'entry');
+			let UIEl = this.section.getUIElement(section_id, 'entry');
 
 			let n = this.option.match(/^payload(\d+)_/)[1];
-			var newvalue = new RulesEntry(UIEl.getValue()).setPayload(n, {type: value}).toString();
+			let rule = new RulesEntry(UIEl.getValue()).setPayload(n, {type: value});
 
-			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
 		}
 
 		o = s.option(form.Value, prefix + 'general', _('Factor') + ` ${n+1}`);
@@ -286,25 +326,135 @@ function renderPayload(s, total, uciconfig) {
 		initPayload(o, n, 'factor', uciconfig);
 
 		o = s.option(form.ListValue, prefix + 'rule_set', _('Factor') + ` ${n+1}`);
-		o.value('', _('-- Please choose --'));
 		if (n === 0)
 			o.depends('type', 'RULE-SET');
 		o.depends(prefix + 'type', 'RULE-SET');
 		initPayload(o, n, 'factor', uciconfig);
 		o.load = L.bind(function(n, key, uciconfig, section_id) {
-			hm.loadRulesetLabel.call(this, null, section_id);
+			hm.loadRulesetLabel.call(this, [], null, section_id);
 
 			return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayload(n)[key];
 		}, o, n, 'factor', uciconfig)
+
+		o = s.option(form.Flag, prefix + 'NOT', _('NOT') + ` ${n+1}`);
+		o.default = o.disabled;
+		o.depends(Object.fromEntries([[prefix + 'type', /.+/]]));
+		initPayload(o, n, 'deny', uciconfig);
+		o.load = L.bind(function(n, key, uciconfig, section_id) {
+			return boolToFlag(new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayload(n)[key] ? true : false);
+		}, o, n, 'deny', uciconfig);
+		o.onchange = function(ev, section_id, value) {
+			let UIEl = this.section.getUIElement(section_id, 'entry');
+
+			let n = this.option.match(/^payload(\d+)_/)[1];
+			let rule = new RulesEntry(UIEl.getValue()).setPayload(n, {deny: flagToBool(value) || null});
+
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
+		}
 	}
+
+	// DynamicList payload
+	let extenbox = {};
+	Object.entries(hm.rules_logical_payload_count).filter(e => e[1].high === undefined).forEach((e) => {
+		let low = e[1].low;
+		let type = e[0];
+		if (!Array.isArray(extenbox[low]))
+			extenbox[low] = [];
+		extenbox[low].push(type);
+	})
+	Object.keys(extenbox).forEach((n) => {
+		prefix = `payload${n}_`;
+
+		o = s.option(hm.StaticList, prefix + 'type', _('Type') + ' ++');
+		o.default = hm.rules_type[0][0];
+		hm.rules_type.forEach((res) => {
+			o.value.apply(o, res);
+		})
+		extenbox[n].forEach((type) => {
+			o.depends('type', type);
+		})
+		initDynamicPayload(o, n, 'type', uciconfig);
+		o.validate = function(section_id, value) {
+			value = this.formvalue(section_id);
+			let UIEl = this.section.getUIElement(section_id, 'entry');
+			let rule = new RulesEntry(UIEl.getValue());
+
+			let n = this.option.match(/^payload(\d+)_/)[1];
+			value.forEach((val) => {
+				rule.setPayload(n, {type: val}); n++;
+			});
+			rule.setPayload(n, {type: null}, n);
+
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
+
+			return true;
+		}
+
+		o = s.option(form.DynamicList, prefix + 'fused', _('Factor') + ' ++',
+			_('Content will not be verified, Please make sure you enter it correctly.'));
+		extenbox[n].forEach((type) => {
+			o.depends(Object.fromEntries([['type', type], [prefix + 'type', /.+/]]));
+		})
+		initDynamicPayload(o, n, 'factor', uciconfig);
+		o.load = L.bind(function(n, key, uciconfig, section_id) {
+			let fusedval = [
+				['NETWORK', '-- NETWORK --'],
+				['udp', _('UDP')],
+				['tcp', _('TCP')],
+				['RULESET', '-- RULE-SET --']
+			];
+			hm.loadRulesetLabel.call(this, fusedval, null, section_id);
+			this.super('load', section_id);
+
+			return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayloads().slice(n).map(e => e[key] ?? '');
+		}, o, n, 'factor', uciconfig)
+
+		o = s.option(hm.StaticList, prefix + 'NOTs', _('NOT') + ' ++',
+			_('<code>0</code> or <code>1</code> only.'));
+		o.value('0');
+		o.value('1');
+		extenbox[n].forEach((type) => {
+			o.depends(Object.fromEntries([['type', type], [prefix + 'type', /.+/]]));
+		})
+		initDynamicPayload(o, n, 'deny', uciconfig);
+		o.load = L.bind(function(n, key, uciconfig, section_id) {
+			return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getPayloads().slice(n).map(e => boolToFlag(e[key] ? true : false));
+		}, o, n, 'deny', uciconfig);
+		o.validate = function(section_id, value) {
+			value = this.formvalue(section_id);
+			let UIEl = this.section.getUIElement(section_id, 'entry');
+			let rule = new RulesEntry(UIEl.getValue());
+
+			let n = this.option.match(/^payload(\d+)_/)[1];
+			let limit = rule.getPayloads().length;
+			value.forEach((value) => {
+				rule.setPayload(n, {deny: flagToBool(value) || null}); n++;
+			});
+			rule.setPayload(limit, {deny: null}, limit);
+
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
+
+			return true;
+		}
+	})
 }
 
 function renderRules(s, uciconfig) {
-	var o;
+	let o;
 
 	o = s.option(form.DummyValue, 'entry', _('Entry'));
+	o.renderWidget = function(/* ... */) {
+		let El = form.DummyValue.prototype.renderWidget.apply(this, arguments);
+
+		El.firstChild.innerText = new RulesEntry(El.querySelector('input').value).toString('mihomo');
+
+		return El;
+	}
 	o.load = function(section_id) {
-		return form.DummyValue.prototype.load.call(this, section_id) || '%s,%s,%s'.format(hm.rules_type[0][0], '', hm.preset_outbound.full[0][0]);
+		return form.DummyValue.prototype.load.call(this, section_id) || new RulesEntry().toString('json');
 	}
 	o.write = L.bind(form.AbstractValue.prototype.write, o);
 	o.remove = L.bind(form.AbstractValue.prototype.remove, o);
@@ -334,99 +484,92 @@ function renderRules(s, uciconfig) {
 				UIEl.node.querySelector('input').disabled = 'true';
 			});
 
-			var UIEl = this.section.getUIElement(section_id, 'entry');
+			let UIEl = this.section.getUIElement(section_id, 'entry');
 
-			var newvalue = new RulesEntry(UIEl.getValue()).setParam('no-resolve').setParam('src').toString();
+			let rule = new RulesEntry(UIEl.getValue()).setParam('no-resolve').setParam('src');
 
-			UIEl.node.previousSibling.innerText = newvalue;
-			UIEl.setValue(newvalue);
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
 		}
 
 		return true;
 	}
 	o.onchange = function(ev, section_id, value) {
-		var UIEl = this.section.getUIElement(section_id, 'entry');
+		let UIEl = this.section.getUIElement(section_id, 'entry');
 
-		var newvalue = new RulesEntry(UIEl.getValue()).setKey('type', value).toString();
+		let rule = new RulesEntry(UIEl.getValue()).setKey('type', value);
 
-		UIEl.node.previousSibling.innerText = newvalue;
-		return UIEl.setValue(newvalue);
+		UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+		UIEl.setValue(rule.toString('json'));
 	}
 	o.write = function() {};
 	o.rmempty = false;
 	o.modalonly = true;
 
-	renderPayload(s, Math.max(...Object.values(hm.rules_logical_payload_count)), uciconfig);
+	renderPayload(s, Math.max(...Object.values(hm.rules_logical_payload_count).map(e => e.low)), uciconfig);
 
-	o = s.option(form.ListValue, 'detour', _('Proxy group'));
-	o.renderWidget = function(/* ... */) {
-		var frameEl = form.ListValue.prototype.renderWidget.apply(this, arguments);
-
-		frameEl.querySelector('select').style["min-width"] = '10em';
-
-		return frameEl;
-	}
+	o = s.option(hm.ListValue, 'detour', _('Proxy group'));
 	o.load = function(section_id) {
 		hm.loadProxyGroupLabel.call(this, hm.preset_outbound.full, section_id);
 
 		return new RulesEntry(uci.get(uciconfig, section_id, 'entry')).detour;
 	}
 	o.onchange = function(ev, section_id, value) {
-		var UIEl = this.section.getUIElement(section_id, 'entry');
+		let UIEl = this.section.getUIElement(section_id, 'entry');
 
-		var newvalue = new RulesEntry(UIEl.getValue()).setKey('detour', value).toString();
+		let rule = new RulesEntry(UIEl.getValue()).setKey('detour', value);
 
-		UIEl.node.previousSibling.innerText = newvalue;
-		return UIEl.setValue(newvalue);
+		UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+		UIEl.setValue(rule.toString('json'));
 	}
 	o.write = function() {};
-	//o.depends('SUB-RULE', '0');
+	//o.depends('SUB-RULE', '');
 	o.editable = true;
 
 	o = s.option(form.Flag, 'src', _('src'));
 	o.default = o.disabled;
 	o.load = function(section_id) {
-		return strToFlag(new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getParam('src'));
+		return boolToFlag(new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getParam('src') ? true : false);
 	}
 	o.onchange = function(ev, section_id, value) {
-		var UIEl = this.section.getUIElement(section_id, 'entry');
+		let UIEl = this.section.getUIElement(section_id, 'entry');
 
-		var newvalue = new RulesEntry(UIEl.getValue()).setParam('src', flagToStr(value)).toString();
+		let rule = new RulesEntry(UIEl.getValue()).setParam('src', flagToBool(value) || null);
 
-		UIEl.node.previousSibling.innerText = newvalue;
-		UIEl.setValue(newvalue);
+		UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+		UIEl.setValue(rule.toString('json'));
 	}
 	o.write = function() {};
-	o.depends('SUB-RULE', '0');
+	o.depends('SUB-RULE', '');
 	o.modalonly = true;
 
 	o = s.option(form.Flag, 'no-resolve', _('no-resolve'));
 	o.default = o.disabled;
 	o.load = function(section_id) {
-		return strToFlag(new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getParam('no-resolve'));
+		return boolToFlag(new RulesEntry(uci.get(uciconfig, section_id, 'entry')).getParam('no-resolve') ? true : false);
 	}
 	o.onchange = function(ev, section_id, value) {
-		var UIEl = this.section.getUIElement(section_id, 'entry');
+		let UIEl = this.section.getUIElement(section_id, 'entry');
 
-		var newvalue = new RulesEntry(UIEl.getValue()).setParam('no-resolve', flagToStr(value)).toString();
+		let rule = new RulesEntry(UIEl.getValue()).setParam('no-resolve', flagToBool(value) || null);
 
-		UIEl.node.previousSibling.innerText = newvalue;
-		UIEl.setValue(newvalue);
+		UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+		UIEl.setValue(rule.toString('json'));
 	}
 	o.write = function() {};
-	o.depends('SUB-RULE', '0');
+	o.depends('SUB-RULE', '');
 	o.modalonly = true;
 }
 
 return view.extend({
-	load: function() {
+	load() {
 		return Promise.all([
 			uci.load('fchomo')
 		]);
 	},
 
-	render: function(data) {
-		var dashboard_repo = uci.get(data[0], 'api', 'dashboard_repo');
+	render(data) {
+		const dashboard_repo = uci.get(data[0], 'api', 'dashboard_repo');
 
 		let m, s, o, ss, so;
 
@@ -434,15 +577,15 @@ return view.extend({
 
 		s = m.section(form.TypedSection);
 		s.render = function () {
-			poll.add(function () {
+			poll.add(function() {
 				return hm.getServiceStatus('mihomo-c').then((isRunning) => {
-					hm.updateStatus(hm, document.getElementById('_client_bar'), isRunning ? { dashboard_repo: dashboard_repo } : false, 'mihomo-c', true);
+					hm.updateStatus(document.getElementById('_client_bar'), isRunning ? { dashboard_repo: dashboard_repo } : false, 'mihomo-c', true);
 				});
 			});
 
 			return E('div', { class: 'cbi-section' }, [
 				E('p', [
-					hm.renderStatus(hm, '_client_bar', false, 'mihomo-c', true)
+					hm.renderStatus('_client_bar', false, 'mihomo-c', true)
 				])
 			]);
 		}
@@ -508,7 +651,7 @@ return view.extend({
 
 		so = ss.taboption('field_general', form.MultiValue, 'proxies', _('Node'));
 		so.value('', _('-- Please choose --'));
-		so.load = L.bind(hm.loadNodeLabel, so);
+		so.load = L.bind(hm.loadNodeLabel, so, [['', _('-- Please choose --')]]);
 		so.validate = function(section_id, value) {
 			if (this.section.getOption('include_all').formvalue(section_id) === '1' ||
 			    this.section.getOption('include_all_proxies').formvalue(section_id) === '1')
@@ -522,7 +665,7 @@ return view.extend({
 
 		so = ss.taboption('field_general', form.MultiValue, 'use', _('Provider'));
 		so.value('', _('-- Please choose --'));
-		so.load = L.bind(hm.loadProviderLabel, so);
+		so.load = L.bind(hm.loadProviderLabel, so, [['', _('-- Please choose --')]]);
 		so.validate = function(section_id, value) {
 			if (this.section.getOption('include_all').formvalue(section_id) === '1' ||
 			    this.section.getOption('include_all_providers').formvalue(section_id) === '1')
@@ -554,16 +697,22 @@ return view.extend({
 		so.default = so.disabled;
 		so.modalonly = true;
 
+		// need deprecated
 		so = ss.taboption('field_override', widgets.DeviceSelect, 'interface_name', _('Bind interface'),
 			_('Bind outbound interface.</br>') +
-			_('Priority: Proxy Node > Proxy Group > Global.'));
+			_('Priority: Proxy Node > Proxy Group > Global.') + '</br>' +
+			_('Option will soon be deprecated, please use the same option in proxy node.'));
 		so.multiple = false;
 		so.noaliases = true;
+		so.readonly = true;
 		so.modalonly = true;
 
+		// need deprecated
 		so = ss.taboption('field_override', form.Value, 'routing_mark', _('Routing mark'),
-			_('Priority: Proxy Node > Proxy Group > Global.'));
+			_('Priority: Proxy Node > Proxy Group > Global.') + '</br>' +
+			_('Option will soon be deprecated, please use the same option in proxy node.'));
 		so.datatype = 'uinteger';
+		so.readonly = true;
 		so.modalonly = true;
 
 		/* Health fields */
@@ -676,46 +825,28 @@ return view.extend({
 
 		renderRules(ss, data[0]);
 
-		so = ss.option(form.Flag, 'SUB-RULE', _('SUB-RULE'));
-		so.default = so.disabled;
+		so = ss.option(form.ListValue, 'SUB-RULE', _('SUB-RULE'));
 		so.load = function(section_id) {
-			return strToFlag(new RulesEntry(uci.get(data[0], section_id, 'entry')).subrule ? 'true' : 'false');
+			hm.loadSubRuleGroup.call(this, [['', _('-- Please choose --')]], section_id);
+
+			return new RulesEntry(uci.get(data[0], section_id, 'entry')).subrule || '';
 		}
 		so.validate = function(section_id, value) {
 			value = this.formvalue(section_id);
 
-			this.section.getUIElement(section_id, 'detour').node.querySelector('select').disabled = (value === '1') ? 'true' : null;
+			this.section.getUIElement(section_id, 'detour').node.querySelector('select').disabled = value ? 'true' : null;
 
 			return true;
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'entry');
+			let UIEl = this.section.getUIElement(section_id, 'entry');
 
-			var newvalue = new RulesEntry(UIEl.getValue()).setKey('subrule', value === '1' ? ' ' : false).toString();
+			let rule = new RulesEntry(UIEl.getValue()).setKey('subrule', value);
 
-			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.node.previousSibling.innerText = rule.toString('mihomo');
+			UIEl.setValue(rule.toString('json'));
 		}
 		so.write = function() {};
-		so.modalonly = true;
-
-		so = ss.option(form.ListValue, 'sub_rule', _('Sub rule'));
-		so.load = function(section_id) {
-			hm.loadSubRuleGroup.call(this, section_id);
-
-			return new RulesEntry(uci.get(data[0], section_id, 'entry')).subrule || '';
-		}
-		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'entry');
-
-			var newvalue = new RulesEntry(UIEl.getValue()).setKey('subrule', value).toString();
-
-			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
-		}
-		so.rmempty = false;
-		so.write = function() {};
-		so.depends('SUB-RULE', '1');
 		so.modalonly = true;
 		/* Routing rules END */
 
@@ -783,22 +914,22 @@ return view.extend({
 		so.rmempty = false;
 
 		so = ss.option(form.MultiValue, 'default_server', _('Default DNS server'));
-		so.description = uci.get(data[0], so.section.section, 'fallback_server') ? _('Final DNS server (Used to Domestic-IP response)') : _('Final DNS server');
+		so.description = uci.get(data[0], so.section.section, 'fallback_server') ? _('Final DNS server (For non-poisoned domains)') : _('Final DNS server');
 		so.default = 'default-dns';
 		so.load = L.bind(loadDNSServerLabel, so);
 		so.validate = L.bind(validateNameserver, so);
 		so.rmempty = false;
 
 		so = ss.option(form.MultiValue, 'fallback_server', _('Fallback DNS server'));
-		so.description = uci.get(data[0], so.section.section, 'fallback_server') ? _('Final DNS server (Used to Overseas-IP response)') : _('Fallback DNS server');
+		so.description = uci.get(data[0], so.section.section, 'fallback_server') ? _('Final DNS server (For poisoned domains)') : _('Fallback DNS server');
 		so.load = L.bind(loadDNSServerLabel, so);
 		so.validate = L.bind(validateNameserver, so);
 		so.onchange = function(ev, section_id, value) {
-			var ddesc = this.section.getUIElement(section_id, 'default_server').node.nextSibling;
-			var fdesc = ev.target.nextSibling;
+			let ddesc = this.section.getUIElement(section_id, 'default_server').node.nextSibling;
+			let fdesc = ev.target.nextSibling;
 			if (value.length > 0) {
-				ddesc.innerHTML = _('Final DNS server (Used to Domestic-IP response)');
-				fdesc.innerHTML = _('Final DNS server (Used to Overseas-IP response)');
+				ddesc.innerHTML = _('Final DNS server (For non-poisoned domains)');
+				fdesc.innerHTML = _('Final DNS server (For poisoned domains)');
 			} else {
 				ddesc.innerHTML = _('Final DNS server');
 				fdesc.innerHTML = _('Fallback DNS server');
@@ -851,9 +982,9 @@ return view.extend({
 				this.section.getUIElement(section_id, 'ecs').node.querySelector('input').disabled = null;
 				this.section.getUIElement(section_id, 'ecs-override').node.querySelector('input').disabled = null;
 			} else {
-				var UIEl = this.section.getUIElement(section_id, 'address');
+				let UIEl = this.section.getUIElement(section_id, 'address');
 
-				var newvalue = new DNSAddress(UIEl.getValue()).setParam('h3').setParam('ecs').setParam('ecs-override').toString();
+				let newvalue = new DNSAddress(UIEl.getValue()).setParam('h3').setParam('ecs').setParam('ecs-override').toString();
 
 				UIEl.node.previousSibling.innerText = newvalue;
 				UIEl.setValue(newvalue);
@@ -868,37 +999,30 @@ return view.extend({
 			return true;
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'address');
+			let UIEl = this.section.getUIElement(section_id, 'address');
 
-			var newvalue = ('N' + UIEl.getValue()).replace(/^[^#]+/, value);
+			let newvalue = ('N' + UIEl.getValue()).replace(/^[^#]+/, value);
 
 			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.setValue(newvalue);
 		}
 		so.write = function() {};
 		so.rmempty = false;
 		so.modalonly = true;
 
-		so = ss.option(form.ListValue, 'detour', _('Proxy group'));
-		so.renderWidget = function(/* ... */) {
-			var frameEl = form.ListValue.prototype.renderWidget.apply(this, arguments);
-
-			frameEl.querySelector('select').style["min-width"] = '10em';
-
-			return frameEl;
-		}
+		so = ss.option(hm.ListValue, 'detour', _('Proxy group'));
 		so.load = function(section_id) {
 			hm.loadProxyGroupLabel.call(this, hm.preset_outbound.dns, section_id);
 
 			return new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('detour');
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'address');
+			let UIEl = this.section.getUIElement(section_id, 'address');
 
-			var newvalue = new DNSAddress(UIEl.getValue()).setParam('detour', value).toString();
+			let newvalue = new DNSAddress(UIEl.getValue()).setParam('detour', value).toString();
 
 			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.setValue(newvalue);
 		}
 		so.write = function() {};
 		so.editable = true;
@@ -906,15 +1030,15 @@ return view.extend({
 		so = ss.option(form.Flag, 'h3', _('HTTP/3'));
 		so.default = so.disabled;
 		so.load = function(section_id) {
-			return strToFlag(new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('h3'));
+			return boolToFlag(new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('h3') ? true : false);
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'address');
+			let UIEl = this.section.getUIElement(section_id, 'address');
 
-			var newvalue = new DNSAddress(UIEl.getValue()).setParam('h3', flagToStr(value)).toString();
+			let newvalue = new DNSAddress(UIEl.getValue()).setParam('h3', flagToBool(value) || null).toString();
 
 			UIEl.node.previousSibling.innerText = newvalue;
-			return UIEl.setValue(newvalue);
+			UIEl.setValue(newvalue);
 		}
 		so.write = function() {};
 		so.modalonly = true;
@@ -925,9 +1049,9 @@ return view.extend({
 			return new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('ecs');
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'address');
+			let UIEl = this.section.getUIElement(section_id, 'address');
 
-			var newvalue = new DNSAddress(UIEl.getValue()).setParam('ecs', value).toString();
+			let newvalue = new DNSAddress(UIEl.getValue()).setParam('ecs', value).toString();
 
 			UIEl.node.previousSibling.innerText = newvalue;
 			UIEl.setValue(newvalue);
@@ -939,12 +1063,12 @@ return view.extend({
 			_('Override ECS in original request.'));
 		so.default = so.disabled;
 		so.load = function(section_id) {
-			return strToFlag(new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('ecs-override'));
+			return boolToFlag(new DNSAddress(uci.get(data[0], section_id, 'address')).parseParam('ecs-override') ? true : false);
 		}
 		so.onchange = function(ev, section_id, value) {
-			var UIEl = this.section.getUIElement(section_id, 'address');
+			let UIEl = this.section.getUIElement(section_id, 'address');
 
-			var newvalue = new DNSAddress(UIEl.getValue()).setParam('ecs-override', flagToStr(value)).toString();
+			let newvalue = new DNSAddress(UIEl.getValue()).setParam('ecs-override', flagToBool(value) || null).toString();
 
 			UIEl.node.previousSibling.innerText = newvalue;
 			UIEl.setValue(newvalue);
@@ -998,13 +1122,13 @@ return view.extend({
 		so = ss.option(form.MultiValue, 'rule_set', _('Rule set'),
 			_('Match rule set.'));
 		so.value('', _('-- Please choose --'));
-		so.load = L.bind(hm.loadRulesetLabel, so, ['domain', 'classical']);
+		so.load = L.bind(hm.loadRulesetLabel, so, [['', _('-- Please choose --')]], ['domain', 'classical']);
 		so.depends('type', 'rule_set');
 		so.modalonly = true;
 
 		so = ss.option(form.DummyValue, '_entry', _('Entry'));
 		so.load = function(section_id) {
-			var option = uci.get(data[0], section_id, 'type');
+			const option = uci.get(data[0], section_id, 'type');
 
 			return uci.get(data[0], section_id, option)?.join(',');
 		}
@@ -1018,15 +1142,8 @@ return view.extend({
 		so.rmempty = false;
 		so.editable = true;
 
-		so = ss.option(form.ListValue, 'proxy', _('Proxy group'),
+		so = ss.option(hm.ListValue, 'proxy', _('Proxy group override'),
 			_('Override the Proxy group of DNS server.'));
-		so.renderWidget = function(/* ... */) {
-			var frameEl = form.ListValue.prototype.renderWidget.apply(this, arguments);
-
-			frameEl.querySelector('select').style["min-width"] = '10em';
-
-			return frameEl;
-		}
 		so.default = hm.preset_outbound.direct[0][0];
 		hm.preset_outbound.direct.forEach((res) => {
 			so.value.apply(so, res);
