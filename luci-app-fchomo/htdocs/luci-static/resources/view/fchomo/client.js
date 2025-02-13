@@ -392,7 +392,7 @@ function renderPayload(s, total, uciconfig) {
 			return true;
 		}
 
-		o = s.option(form.DynamicList, prefix + 'fused', _('Factor') + ' ++',
+		o = s.option((hm.less_24_10 || !hm.pr7558_merged) ? hm.DynamicList : form.DynamicList, prefix + 'fused', _('Factor') + ' ++',
 			_('Content will not be verified, Please make sure you enter it correctly.'));
 		extenbox[n].forEach((type) => {
 			o.depends(Object.fromEntries([['type', type], [prefix + 'type', /.+/]]));
@@ -697,20 +697,20 @@ return view.extend({
 		so.default = so.disabled;
 		so.modalonly = true;
 
-		// need deprecated
+		// Deprecated
 		so = ss.taboption('field_override', widgets.DeviceSelect, 'interface_name', _('Bind interface'),
 			_('Bind outbound interface.</br>') +
-			_('Priority: Proxy Node > Proxy Group > Global.') + '</br>' +
-			_('Option will soon be deprecated, please use the same option in proxy node.'));
+			_('Priority: Proxy Node > Global.') + '</br>' +
+			_('Option is deprecated, please use the same option in proxy node.'));
 		so.multiple = false;
 		so.noaliases = true;
 		so.readonly = true;
 		so.modalonly = true;
 
-		// need deprecated
+		// Deprecated
 		so = ss.taboption('field_override', form.Value, 'routing_mark', _('Routing mark'),
-			_('Priority: Proxy Node > Proxy Group > Global.') + '</br>' +
-			_('Option will soon be deprecated, please use the same option in proxy node.'));
+			_('Priority: Proxy Node > Global.') + '</br>' +
+			_('Option is deprecated, please use the same option in proxy node.'));
 		so.datatype = 'uinteger';
 		so.readonly = true;
 		so.modalonly = true;
@@ -891,7 +891,7 @@ return view.extend({
 		o = s.taboption('dns', form.SectionValue, '_dns', form.NamedSection, 'dns', 'fchomo', null);
 		ss = o.subsection;
 
-		so = ss.option(form.Value, 'port', _('Listen port'));
+		so = ss.option(form.Value, 'dns_port', _('Listen port'));
 		so.datatype = 'port'
 		so.placeholder = '7853';
 		so.rmempty = false;

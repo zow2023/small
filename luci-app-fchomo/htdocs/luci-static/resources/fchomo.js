@@ -10,10 +10,19 @@
 /* Member */
 const rulesetdoc = 'data:text/html;base64,' + 'cmxzdHBsYWNlaG9sZGVy';
 
+const sharkaudio = function() {
+	return 'data:audio/x-wav;base64,' +
+'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+}()
+
 const sharktaikogif = function() {
 	return 'data:image/gif;base64,' +
 'c2hhcmstdGFpa28uZ2lm'
 }()
+
+const less_24_10 = !form.RichListValue;
+
+const pr7558_merged = form.DynamicList.prototype.renderWidget.toString().match('this\.allowduplicates');
 
 const monospacefonts = [
 	'"Cascadia Code"',
@@ -59,6 +68,7 @@ const inbound_type = [
 	['mixed', _('Mixed')],
 	['shadowsocks', _('Shadowsocks')],
 	['vmess', _('VMess')],
+	['vless', _('VLESS')],
 	['tuic', _('TUIC')],
 	['hysteria2', _('Hysteria2')],
 	//['tunnel', _('Tunnel')]
@@ -125,10 +135,10 @@ const proxy_group_type = [
 
 const routing_port_type = [
 	['all', _('All ports')],
-	['common_tcpport', _('Common ports only (bypass P2P traffic)')],
-	['common_udpport', _('Common ports only (bypass P2P traffic)')],
-	['stun_port', _('STUN ports')],
-	['turn_port', _('TURN ports')],
+	['common_tcpport', _('Common ports only (bypass P2P traffic)'), uci.get('fchomo', 'routing', 'common_tcpport') || '20-21,22,53,80,110,143,443,465,853,873,993,995,5222,8080,8443,9418'],
+	['common_udpport', _('Common ports only (bypass P2P traffic)'), uci.get('fchomo', 'routing', 'common_udpport') || '20-21,22,53,80,110,143,443,853,993,995,8080,8443,9418'],
+	['stun_port', _('STUN ports'), uci.get('fchomo', 'routing', 'stun_port') || '3478,19302'],
+	['turn_port', _('TURN ports'), uci.get('fchomo', 'routing', 'turn_port') || '5349'],
 ];
 
 const rules_type = [
@@ -234,11 +244,39 @@ const tls_client_fingerprints = [
 	['random']
 ];
 
+const vless_flow = [
+	['', _('None')],
+	['xtls-rprx-vision']
+];
+
 /* Prototype */
+const CBIDynamicList = form.DynamicList.extend({
+	__name__: 'CBI.DynamicList',
+
+	renderWidget(section_id, option_index, cfgvalue) {
+		const value = (cfgvalue != null) ? cfgvalue : this.default;
+		const choices = this.transformChoices();
+		const items = L.toArray(value);
+
+		const widget = new UIDynamicList(items, choices, {
+			id: this.cbid(section_id),
+			sort: this.keylist,
+			allowduplicates: this.allowduplicates,
+			optional: this.optional || this.rmempty,
+			datatype: this.datatype,
+			placeholder: this.placeholder,
+			validate: L.bind(this.validate, this, section_id),
+			disabled: (this.readonly != null) ? this.readonly : this.map.readonly
+		});
+
+		return widget.render();
+	}
+});
+
 const CBIGenValue = form.Value.extend({
 	__name__: 'CBI.GenValue',
 
-	renderWidget() {
+	renderWidget(/* ... */) {
 		let node = form.Value.prototype.renderWidget.apply(this, arguments);
 
 		if (!this.password)
@@ -247,7 +285,7 @@ const CBIGenValue = form.Value.extend({
 		(node.querySelector('.control-group') || node).appendChild(E('button', {
 			'class': 'cbi-button cbi-button-add',
 			'title': _('Generate'),
-			'click': ui.createHandlerFn(this, handleGenKey, this.option)
+			'click': ui.createHandlerFn(this, handleGenKey, this.hm_asymmetric || this.option)
 		}, [ _('Generate') ]));
 
 		return node;
@@ -264,11 +302,17 @@ const CBIListValue = form.ListValue.extend({
 	}
 });
 
+const CBIRichMultiValue = form.MultiValue.extend({
+	__name__: 'CBI.RichMultiValue',
+
+	value: (form.RichListValue || form.MultiValue).prototype.value // less_24_10
+});
+
 const CBIStaticList = form.DynamicList.extend({
 	__name__: 'CBI.StaticList',
 
 	renderWidget(/* ... */) {
-		let El = form.DynamicList.prototype.renderWidget.apply(this, arguments);
+		let El = ((less_24_10 || !pr7558_merged) ? CBIDynamicList : form.DynamicList).prototype.renderWidget.apply(this, arguments);
 
 		El.querySelector('.add-item ul > li[data-value="-"]')?.remove();
 
@@ -283,6 +327,33 @@ const CBITextValue = form.TextValue.extend({
 		frameEl.querySelector('textarea').style.fontFamily = monospacefonts.join(',');
 
 		return frameEl;
+	}
+});
+
+const UIDynamicList = ui.DynamicList.extend({
+	addItem(dl, value, text, flash) {
+		if (this.options.allowduplicates) {
+			const new_item = E('div', { 'class': flash ? 'item flash' : 'item', 'tabindex': 0, 'draggable': !less_24_10 }, [
+				E('span', {}, [ text ?? value ]),
+				E('input', {
+					'type': 'hidden',
+					'name': this.options.name,
+					'value': value })]);
+
+			const ai = dl.querySelector('.add-item');
+			ai.parentNode.insertBefore(new_item, ai);
+		}
+
+		ui.DynamicList.prototype.addItem.call(this, dl, value, text, flash);
+	},
+
+	handleDropdownChange(ev) {
+		ui.DynamicList.prototype.handleDropdownChange.call(this, ev);
+
+		if (this.options.allowduplicates) {
+			const sbVal = ev.detail.value;
+			sbVal?.element.removeAttribute('unselectable');
+		}
 	}
 });
 
@@ -685,35 +756,55 @@ function handleAdd(prefmt, ev, name) {
 function handleGenKey(option) {
 	const section_id = this.section.section;
 	const type = this.section.getOption('type').formvalue(section_id);
-	let widget = this.map.findElement('id', 'widget.cbid.fchomo.%s.%s'.format(section_id, option));
-	let password, required_method;
+	const widget = L.bind(function(option) {
+		return this.map.findElement('id', 'widget.' + this.cbid(section_id).replace(/\.[^\.]+$/, '.') + option);
+	}, this);
 
-	if (option === 'uuid' || option.match(/_uuid/))
-		required_method = 'uuid';
-	else if (type === 'shadowsocks')
-		required_method = this.section.getOption('shadowsocks_chipher')?.formvalue(section_id);
+	const callMihomoGenerator = rpc.declare({
+		object: 'luci.fchomo',
+		method: 'mihomo_generator',
+		params: ['type'],
+		expect: { '': {} }
+	});
 
-	switch (required_method) {
-		/* NONE */
-		case 'none':
-			password = '';
-			break;
-		/* UUID */
-		case 'uuid':
-			password = generateRand('uuid');
-			break;
-		/* DEFAULT */
-		default:
-			password = generateRand('hex', 16);
-			break;
+	if (typeof option === 'object') {
+		return callMihomoGenerator(option.type).then((ret) => {
+			if (ret.result)
+				for (let key in option.result)
+					widget(option.result[key]).value = ret.result[key];
+			else
+				ui.addNotification(null, E('p', _('Failed to generate %s, error: %s.').format(type, ret.error)));
+		});
+	} else {
+		let password, required_method;
+
+		if (option === 'uuid' || option.match(/_uuid/))
+			required_method = 'uuid';
+		else if (type === 'shadowsocks')
+			required_method = this.section.getOption('shadowsocks_chipher')?.formvalue(section_id);
+
+		switch (required_method) {
+			/* NONE */
+			case 'none':
+				password = '';
+				break;
+			/* UUID */
+			case 'uuid':
+				password = generateRand('uuid');
+				break;
+			/* DEFAULT */
+			default:
+				password = generateRand('hex', 16);
+				break;
+		}
+		/* AEAD */
+		(function(length) {
+			if (length && length > 0)
+				password = generateRand('base64', length);
+		}(shadowsocks_cipher_length[required_method]));
+
+		return widget(option).value = password;
 	}
-	/* AEAD */
-	(function(length) {
-		if (length && length > 0)
-			password = generateRand('base64', length);
-	}(shadowsocks_cipher_length[required_method]));
-
-	return widget.value = password;
 }
 
 function handleReload(instance, ev, section_id) {
@@ -1066,7 +1157,10 @@ function uploadInitialPack(ev, section_id) {
 return baseclass.extend({
 	/* Member */
 	rulesetdoc,
+	sharkaudio,
 	sharktaikogif,
+	less_24_10,
+	pr7558_merged,
 	monospacefonts,
 	dashrepos,
 	dashrepos_urlparams,
@@ -1086,10 +1180,13 @@ return baseclass.extend({
 	shadowsocks_cipher_length,
 	stunserver,
 	tls_client_fingerprints,
+	vless_flow,
 
 	/* Prototype */
+	DynamicList: CBIDynamicList,
 	GenValue: CBIGenValue,
 	ListValue: CBIListValue,
+	RichMultiValue: CBIRichMultiValue,
 	StaticList: CBIStaticList,
 	TextValue: CBITextValue,
 

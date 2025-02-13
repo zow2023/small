@@ -106,43 +106,6 @@ function updateResVersion(El, version) {
 	return El;
 }
 
-function renderNATBehaviorTest(El) {
-	let resEl = E('div',  { 'class': 'control-group' }, [
-		E('select', {
-			'id': '_status_nattest_l4proto',
-			'class': 'cbi-input-select',
-			'style': 'width: 5em'
-		}, [
-			E('option', { 'value': 'udp' }, 'UDP'),
-			E('option', { 'value': 'tcp' }, 'TCP')
-		]),
-		E('button', {
-			'class': 'cbi-button cbi-button-apply',
-			'click': ui.createHandlerFn(this, function() {
-				const stun = this.formvalue(this.section.section);
-				const l4proto = document.getElementById('_status_nattest_l4proto').value;
-				const l4proto_idx = document.getElementById('_status_nattest_l4proto').selectedIndex;
-
-				return fs.exec_direct('/etc/fchomo/scripts/natcheck.sh', [stun, l4proto, getRandom(32768, 61000)]).then((stdout) => {
-					this.description = '<details><summary>' + _('Expand/Collapse result') + '</summary>' + stdout + '</details>';
-
-					return this.map.reset().then((res) => {
-						document.getElementById('_status_nattest_l4proto').selectedIndex = l4proto_idx;
-					});
-				});
-			})
-		}, [ _('Check') ])
-	]);
-
-	let newEl = E('div', { style: 'font-weight: bold; align-items: center; display: flex' }, []);
-	if (El) {
-		newEl.appendChild(E([El, resEl]));
-	} else
-		newEl.appendChild(resEl);
-
-	return newEl;
-}
-
 return view.extend({
 	load() {
 		return Promise.all([
@@ -172,8 +135,24 @@ return view.extend({
 
 		let m, s, o, ss, so;
 
-		m = new form.Map('fchomo', _('FullCombo Mihomo'),
-			'<img src="' + hm.sharktaikogif + '" title="Ciallo～(∠・ω< )⌒☆" height="52"></img>');
+		m = new form.Map('fchomo', _('FullCombo Shark!'),
+			'<img src="' + hm.sharktaikogif + '" title="A!" alt="Ciallo～(∠・ω< )⌒☆" height="52"></img>' +
+			'<audio src="' + hm.sharkaudio + '" preload="auto" hidden=""></audio>');
+		m.renderContents = function(/* ... */) {
+			let node = form.Map.prototype.renderContents.apply(this, arguments);
+
+			return node.then((mapEl) => {
+				const playButton = mapEl.querySelector('.cbi-map-descr > img');
+				const audio = mapEl.querySelector('.cbi-map-descr > audio');
+
+				playButton.addEventListener('click', function() {
+					if (audio.paused)
+						audio.play();
+				});
+
+				return mapEl;
+			});
+		}
 
 		s = m.section(form.NamedSection, 'config', 'fchomo');
 
@@ -247,7 +226,7 @@ return view.extend({
 		}
 
 		so = ss.option(form.Value, '_nattest', _('Check routerself NAT Behavior'));
-		so.default = hm.stunserver[0][0];
+		so.default = `udp://${hm.stunserver[0][0]}`;
 		hm.stunserver.forEach((res) => {
 			so.value.apply(so, res);
 		})
@@ -257,14 +236,60 @@ return view.extend({
 				.format('https://github.com/muink/openwrt-stuntman');
 			so.readonly = true;
 		} else {
-			so.renderWidget = function(/* ... */) {
-				let El = form.Value.prototype.renderWidget.apply(this, arguments);
+			so.renderWidget = function(section_id, option_index, cfgvalue) {
+				const cval = new URL(cfgvalue || this.default);
+				//console.info(cval.toString());
+				let El = form.Value.prototype.renderWidget.call(this, section_id, option_index, cval.host);
 
-				return renderNATBehaviorTest.call(this, El);
+				let resEl = E('div',  { 'class': 'control-group' }, [
+					E('select', {
+						'id': '_status_nattest_l4proto',
+						'class': 'cbi-input-select',
+						'style': 'width: 5em'
+					}, [
+						...[
+							['udp', 'UDP'], // default
+							['tcp', 'TCP']
+						].map(res => E('option', {
+								value: res[0],
+								selected: (cval.protocol === `${res[0]}:`) ? "" : null
+							}, res[1]))
+					]),
+					E('button', {
+						'class': 'cbi-button cbi-button-apply',
+						'click': ui.createHandlerFn(this, function() {
+							const stun = this.formvalue(this.section.section);
+							const l4proto = document.getElementById('_status_nattest_l4proto').value;
+
+							return fs.exec_direct('/usr/libexec/fchomo/natcheck.sh', [stun, l4proto, getRandom(32768, 61000)]).then((stdout) => {
+								this.description = '<details><summary>' + _('Expand/Collapse result') + '</summary>' + stdout + '</details>';
+
+								return this.map.reset().then((res) => {
+								});
+							});
+						})
+					}, [ _('Check') ])
+				]);
+				ui.addValidator(resEl.querySelector('#_status_nattest_l4proto'), 'string', false, (v) => {
+					const section_id = this.section.section;
+					const stun = this.formvalue(section_id);
+
+					this.onchange.call(this, {}, section_id, stun);
+					return true;
+				}, 'change');
+
+				let newEl = E('div', { style: 'font-weight: bold; align-items: center; display: flex' }, []);
+				if (El) {
+					newEl.appendChild(E([El, resEl]));
+				} else
+					newEl.appendChild(resEl);
+
+				return newEl;
 			}
 		}
 		so.onchange = function(ev, section_id, value) {
-			this.default = value;
+			const l4proto = document.getElementById('_status_nattest_l4proto').value;
+			this.default = `${l4proto}://${value}`;
 		}
 		so.write = function() {};
 		so.remove = function() {};
@@ -442,6 +467,7 @@ return view.extend({
 		so.placeholder = '7892';
 		so.rmempty = false;
 
+		// Not required for v1.19.2+
 		so = ss.option(form.Value, 'tunnel_port', _('DNS port'));
 		so.datatype = 'port';
 		so.placeholder = '7893';
@@ -463,7 +489,7 @@ return view.extend({
 		o = s.taboption('inbound', form.SectionValue, '_inbound', form.NamedSection, 'inbound', 'fchomo', _('Tun settings'));
 		ss = o.subsection;
 
-		so = ss.option(form.RichListValue || form.ListValue, 'tun_stack', _('Stack'),
+		so = ss.option(form.RichListValue || form.ListValue, 'tun_stack', _('Stack'), // less_24_10
 			_('Tun stack.'));
 		so.value('system', _('System'), _('Less compatibility and sometimes better performance.'));
 		if (features.with_gvisor) {
@@ -472,7 +498,7 @@ return view.extend({
 		}
 		so.default = 'system';
 		so.rmempty = false;
-		if (!form.RichListValue)
+		if (hm.less_24_10)
 			so.onchange = function(ev, section_id, value) {
 				var desc = ev.target.nextSibling;
 				if (value === 'mixed')
@@ -661,7 +687,7 @@ return view.extend({
 
 		so = ss.taboption('interface', widgets.DeviceSelect, 'bind_interface', _('Bind interface'),
 			_('Bind outbound traffic to specific interface. Leave empty to auto detect.</br>') +
-			_('Priority: Proxy Node > Proxy Group > Global.'));
+			_('Priority: Proxy Node > Global.'));
 		so.multiple = false;
 		so.noaliases = true;
 
@@ -678,7 +704,7 @@ return view.extend({
 		so.rmempty = false;
 
 		so = ss.taboption('interface', form.Value, 'self_mark', _('Routing mark'),
-			_('Priority: Proxy Node > Proxy Group > Global.'));
+			_('Priority: Proxy Node > Global.'));
 		so.ucisection = 'config';
 		so.datatype = 'uinteger';
 		so.placeholder = '200';
@@ -726,7 +752,7 @@ return view.extend({
 		/* Routing control */
 		ss.tab('routing_control', _('Routing Control'));
 
-		so = ss.taboption('routing_control', form.MultiValue, 'routing_tcpport', _('Routing ports') + ' (TCP)',
+		so = ss.taboption('routing_control', hm.RichMultiValue, 'routing_tcpport', _('Routing ports') + ' (TCP)',
 			_('Specify target ports to be proxied. Multiple ports must be separated by commas.'));
 		so.create = true;
 		hm.routing_port_type.forEach((res) => {
@@ -735,7 +761,7 @@ return view.extend({
 		})
 		so.validate = L.bind(hm.validateCommonPort, so);
 
-		so = ss.taboption('routing_control', form.MultiValue, 'routing_udpport', _('Routing ports') + ' (UDP)',
+		so = ss.taboption('routing_control', hm.RichMultiValue, 'routing_udpport', _('Routing ports') + ' (UDP)',
 			_('Specify target ports to be proxied. Multiple ports must be separated by commas.'));
 		so.create = true;
 		hm.routing_port_type.forEach((res) => {
@@ -751,7 +777,9 @@ return view.extend({
 		so.value('routing_gfw', _('Routing GFW'));
 
 		so = ss.taboption('routing_control', form.Flag, 'routing_domain', _('Handle domain'),
-			_('Routing mode will be handle domain.'));
+			_('Routing mode will be handle domain.') + '</br>' +
+			_('Please ensure that the DNS query of the domains to be processed in the DNS policy</br>' +
+				'are send via DIRECT/Proxy Node in the same semantics as Routing mode.'));
 		so.default = so.disabled;
 		if (!features.hm_has_dnsmasq_full) {
 			so.description = _('To enable, you need to install <code>dnsmasq-full</code>.');
