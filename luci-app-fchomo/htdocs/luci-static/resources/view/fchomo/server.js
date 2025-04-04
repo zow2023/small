@@ -54,16 +54,15 @@ return view.extend({
 		o.default = o.disabled;
 
 		/* Server settings START */
-		s = m.section(form.GridSection, 'server', null);
-		var prefmt = { 'prefix': 'server_', 'suffix': '' };
+		s = m.section(hm.GridSection, 'server', null);
 		s.addremove = true;
 		s.rowcolors = true;
 		s.sortable = true;
 		s.nodescriptions = true;
-		s.modaltitle = L.bind(hm.loadModalTitle, s, _('Server'), _('Add a server'));
-		s.sectiontitle = L.bind(hm.loadDefaultLabel, s);
-		s.renderSectionAdd = L.bind(hm.renderSectionAdd, s, prefmt, false);
-		s.handleAdd = L.bind(hm.handleAdd, s, prefmt);
+		s.hm_modaltitle = [ _('Server'), _('Add a server') ];
+		s.hm_prefmt = hm.glossary[s.sectiontype].prefmt;
+		s.hm_field  = hm.glossary[s.sectiontype].field;
+		s.hm_lowcase_only = false;
 
 		s.tab('field_general', _('General fields'));
 		s.tab('field_tls', _('TLS fields'));
@@ -106,15 +105,14 @@ return view.extend({
 		/* hm.validateAuth */
 		o = s.taboption('field_general', form.Value, 'username', _('Username'));
 		o.validate = L.bind(hm.validateAuthUsername, o);
-		o.depends({type: /^(http|socks|mixed|hysteria2)$/});
+		o.depends({type: /^(http|socks|mixed|trojan|anytls|hysteria2)$/});
 		o.modalonly = true;
 
 		o = s.taboption('field_general', hm.GenValue, 'password', _('Password'));
 		o.password = true;
 		o.validate = L.bind(hm.validateAuthPassword, o);
 		o.rmempty = false;
-		o.depends({type: /^(http|socks|mixed|hysteria2)$/, username: /.+/});
-		o.depends('type', 'trojan');
+		o.depends({type: /^(http|socks|mixed|trojan|anytls|hysteria2)$/, username: /.+/});
 		o.depends({type: /^(tuic)$/, uuid: /.+/});
 		o.modalonly = true;
 
@@ -234,6 +232,11 @@ return view.extend({
 		o.depends({type: 'trojan', trojan_ss_enabled: '1'});
 		o.modalonly = true;
 
+		/* AnyTLS fields */
+		o = s.taboption('field_general', form.TextValue, 'anytls_padding_scheme', _('Padding scheme'));
+		o.depends('type', 'anytls');
+		o.modalonly = true;
+
 		/* VMess / VLESS fields */
 		o = s.taboption('field_general', hm.GenValue, 'vmess_uuid', _('UUID'));
 		o.rmempty = false;
@@ -272,7 +275,7 @@ return view.extend({
 			let tls_reality = this.section.getUIElement(section_id, 'tls_reality').node.querySelector('input');
 
 			// Force enabled
-			if (['vless', 'trojan', 'tuic', 'hysteria2'].includes(type)) {
+			if (['vless', 'trojan', 'anytls', 'tuic', 'hysteria2'].includes(type)) {
 				tls.checked = true;
 				tls.disabled = true;
 				if (['tuic', 'hysteria2'].includes(type) && !`${tls_alpn.getValue()}`)
@@ -291,7 +294,7 @@ return view.extend({
 
 			return true;
 		}
-		o.depends({type: /^(http|socks|mixed|vmess|vless|trojan|tuic|hysteria2)$/});
+		o.depends({type: /^(http|socks|mixed|vmess|vless|trojan|anytls|tuic|hysteria2)$/});
 		o.modalonly = true;
 
 		o = s.taboption('field_tls', form.DynamicList, 'tls_alpn', _('TLS ALPN'),

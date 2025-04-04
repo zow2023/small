@@ -11,14 +11,16 @@ return view.extend({
         return Promise.all([
             uci.load('nikki'),
             network.getHostHints(),
-            nikki.getUsers(),
-            nikki.getGroups()
+            network.getNetworks(),
+            nikki.getIdentifiers(),
         ]);
     },
     render: function (data) {
         const hosts = data[1].hosts;
-        const users = data[2];
-        const groups = data[3];
+        const networks = data[2];
+        const users = data[3]?.users ?? [];
+        const groups = data[3]?.groups ?? [];
+        const cgroups = data[3]?.cgroups ?? [];
 
         let m, s, o;
 
@@ -32,11 +34,15 @@ return view.extend({
         o.rmempty = false;
 
         o = s.taboption('transparent_proxy', form.ListValue, 'tcp_transparent_proxy_mode', _('TCP Proxy Mode'));
+        o.optional = true;
+        o.placeholder = _('Disable');
         o.value('redirect', _('Redirect Mode'));
         o.value('tproxy', _('TPROXY Mode'));
         o.value('tun', _('TUN Mode'));
 
         o = s.taboption('transparent_proxy', form.ListValue, 'udp_transparent_proxy_mode', _('UDP Proxy Mode'));
+        o.optional = true;
+        o.placeholder = _('Disable');
         o.value('tproxy', _('TPROXY Mode'));
         o.value('tun', _('TUN Mode'));
 
@@ -108,27 +114,38 @@ return view.extend({
             o.value(mac, hint ? '%s (%s)'.format(mac, hint) : mac);
         };
 
-        o = s.taboption('access_control', widgets.NetworkSelect, 'acl_interface', _('Interface'));
+        o = s.taboption('access_control', form.DynamicList, 'acl_interface', _('Interface'));
         o.multiple = true;
         o.optional = true;
         o.retain = true;
         o.depends('access_control_mode', 'allow');
         o.depends('access_control_mode', 'block');
 
+        for (const network of networks) {
+            if (network.getName() === 'loopback') {
+                continue;
+            }
+            o.value(network.getName());
+        }
+
         s.tab('bypass', _('Bypass'));
 
-        o = s.taboption('bypass', form.MultiValue, 'bypass_user', _('Bypass User'));
-        o.create = true;
+        o = s.taboption('bypass', form.DynamicList, 'bypass_user', _('Bypass User'));
 
         for (const user of users) {
             o.value(user);
         };
 
-        o = s.taboption('bypass', form.MultiValue, 'bypass_group', _('Bypass Group'));
-        o.create = true;
+        o = s.taboption('bypass', form.DynamicList, 'bypass_group', _('Bypass Group'));
 
         for (const group of groups) {
             o.value(group);
+        };
+
+        o = s.taboption('bypass', form.DynamicList, 'bypass_cgroup', _('Bypass cgroup'));
+
+        for (const cgroup of cgroups) {
+            o.value(cgroup);
         };
 
         o = s.taboption('bypass', form.Flag, 'bypass_china_mainland_ip', _('Bypass China Mainland IP'));

@@ -5,9 +5,9 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/MetaCubeX/mihomo.git
-PKG_SOURCE_DATE:=2025-03-02
-PKG_SOURCE_VERSION:=a7e56f1c431b8f17f98eb4d81bfc784a5f1ebc4c
-PKG_MIRROR_HASH:=e6ffc7355fadff8ae93151d016df9b61a618cd4a7125d06f8e1f63f3e70d7b74
+PKG_SOURCE_DATE:=2025-03-20
+PKG_SOURCE_VERSION:=0f32c054f47641a2ee9c9362fc65652e772924b2
+PKG_MIRROR_HASH:=276f1dcc81b3cece5c7de5b16ddac8d596bf20e7c3bb8993d963042acf845a14
 
 PKG_LICENSE:=GPL3.0+
 PKG_MAINTAINER:=Joseph Mory <morytyann@gmail.com>
@@ -16,7 +16,7 @@ PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 
-PKG_BUILD_VERSION:=alpha-a7e56f1
+PKG_BUILD_VERSION:=alpha-0f32c05
 PKG_BUILD_TIME:=$(shell date -u -Iseconds)
 
 GO_PKG:=github.com/metacubex/mihomo
@@ -31,9 +31,8 @@ define Package/nikki
   CATEGORY:=Network
   TITLE:=A rule based proxy in Go.
   URL:=https://wiki.metacubex.one
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +curl +yq firewall4 +ip-full +kmod-inet-diag +kmod-nft-tproxy +kmod-tun
+  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +curl +yq firewall4 +ip-full +kmod-inet-diag +kmod-nft-socket +kmod-nft-tproxy +kmod-tun
   PROVIDES:=nikki mihomo
-  USERID:=root:nikki=1206
 endef
 
 define Package/nikki/description
