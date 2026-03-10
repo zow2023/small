@@ -12,6 +12,19 @@ local chnroute_path = "/usr/share/passwall/rules/chnroute"
 m = Map(appname)
 api.set_apply_on_parse(m)
 
+function clean_text(text)
+	local nbsp = string.char(0xC2, 0xA0) -- 不间断空格（U+00A0）
+	local fullwidth_space = string.char(0xE3, 0x80, 0x80) -- 全角空格（U+3000）
+	return text
+		:gsub("\t", " ")
+		:gsub(nbsp, " ")
+		:gsub(fullwidth_space, " ")
+		:gsub("^%s+", "")
+		:gsub("%s+$", "\n")
+		:gsub("\r\n", "\n")
+		:gsub("[ \t]*\n[ \t]*", "\n")
+end
+
 -- [[ Rule List Settings ]]--
 s = m:section(TypedSection, "global_rules")
 s.anonymous = true
@@ -40,14 +53,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local hosts= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, api.trim(w)) end)
 	for index, host in ipairs(hosts) do
-		if host:sub(1, 1) == "#" or host:sub(1, 8) == "geosite:" then
-			return value
-		end
-		if not datatypes.hostname(host) then
-			return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+		if host ~= "" and not host:find("^#") and not host:find("^geosite:") then
+			if not datatypes.hostname(host) then
+				return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -69,14 +81,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local ipmasks= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, api.trim(w)) end)
 	for index, ipmask in ipairs(ipmasks) do
-		if ipmask:sub(1, 1) == "#" or ipmask:sub(1, 6) == "geoip:" then
-			return value
-		end
-		if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
-			return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+		if ipmask ~= "" and not ipmask:find("^#") and not ipmask:find("^geoip:") then
+			if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
+				return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -100,14 +111,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local hosts= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, api.trim(w)) end)
 	for index, host in ipairs(hosts) do
-		if host:sub(1, 1) == "#" or host:sub(1, 8) == "geosite:" then
-			return value
-		end
-		if not datatypes.hostname(host) then
-			return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+		if host ~= "" and not host:find("^#") and not host:find("^geosite:") then
+			if not datatypes.hostname(host) then
+				return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -129,14 +139,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local ipmasks= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, api.trim(w)) end)
 	for index, ipmask in ipairs(ipmasks) do
-		if ipmask:sub(1, 1) == "#" or ipmask:sub(1, 6) == "geoip:" then
-			return value
-		end
-		if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
-			return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+		if ipmask ~= "" and not ipmask:find("^#") and not ipmask:find("^geoip:") then
+			if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
+				return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -158,14 +167,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local hosts= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(hosts, api.trim(w)) end)
 	for index, host in ipairs(hosts) do
-		if host:sub(1, 1) == "#" or host:sub(1, 8) == "geosite:" then
-			return value
-		end
-		if not datatypes.hostname(host) then
-			return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+		if host ~= "" and not host:find("^#") and not host:find("^geosite:") then
+			if not datatypes.hostname(host) then
+				return nil, host .. " " .. translate("Not valid domain name, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -187,14 +195,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local ipmasks= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, api.trim(w)) end)
 	for index, ipmask in ipairs(ipmasks) do
-		if ipmask:sub(1, 1) == "#" or ipmask:sub(1, 6) == "geoip:" then
-			return value
-		end
-		if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
-			return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+		if ipmask ~= "" and not ipmask:find("^#") and not ipmask:find("^geoip:") then
+			if not ( datatypes.ipmask4(ipmask) or datatypes.ipmask6(ipmask) ) then
+				return nil, ipmask .. " " .. translate("Not valid IP format, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -216,14 +223,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local ipmasks= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, api.trim(w)) end)
 	for index, ipmask in ipairs(ipmasks) do
-		if ipmask:sub(1, 1) == "#" then
-			return value
-		end
-		if not datatypes.ipmask4(ipmask) then
-			return nil, ipmask .. " " .. translate("Not valid IPv4 format, please re-enter!")
+		if ipmask ~= "" and not ipmask:find("^#") then
+			if not datatypes.ipmask4(ipmask) then
+				return nil, ipmask .. " " .. translate("Not valid IPv4 format, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -245,14 +251,13 @@ o.remove = function(self, section, value)
 end
 o.validate = function(self, value)
 	local ipmasks= {}
-	value = value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n")
-	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, w) end)
+	value = clean_text(value)
+	string.gsub(value, '[^' .. "\r\n" .. ']+', function(w) table.insert(ipmasks, api.trim(w)) end)
 	for index, ipmask in ipairs(ipmasks) do
-		if ipmask:sub(1, 1) == "#" then
-			return value
-		end
-		if not datatypes.ipmask6(ipmask) then
-			return nil, ipmask .. " " .. translate("Not valid IPv6 format, please re-enter!")
+		if ipmask ~= "" and not ipmask:find("^#") then
+			if not datatypes.ipmask6(ipmask) then
+				return nil, ipmask .. " " .. translate("Not valid IPv6 format, please re-enter!")
+			end
 		end
 	end
 	return value
@@ -267,7 +272,7 @@ o.cfgvalue = function(self, section)
 	return fs.readfile(hosts) or ""
 end
 o.write = function(self, section, value)
-	fs.writefile(hosts, value:gsub("^%s+", ""):gsub("%s+$","\n"):gsub("\r\n","\n"):gsub("[ \t]*\n[ \t]*", "\n"))
+	fs.writefile(hosts, clean_text(value))
 end
 o.remove = function(self, section, value)
 	fs.writefile(hosts, "")
@@ -317,25 +322,17 @@ m:append(Template(appname .. "/rule_list/js"))
 local geo_dir = (uci:get(appname, "@global_rules[0]", "v2ray_location_asset") or "/usr/share/v2ray/"):match("^(.*)/")
 local geosite_path = geo_dir .. "/geosite.dat"
 local geoip_path = geo_dir .. "/geoip.dat"
-if api.is_finded("geoview") and fs.access(geosite_path) and fs.access(geoip_path) then
-	s:tab("geoview", translate("Geo View"))
-	o = s:taboption("geoview", DummyValue, "_geoview_fieldset")
-	o.rawhtml = true
-	o.template = appname .. "/rule_list/geoview"
+if api.finded_com("geoview") and fs.access(geosite_path) and fs.access(geoip_path) then
+	if api.compare_versions(api.get_app_version("geoview"), ">=", "0.1.0") then
+		s:tab("geoview", translate("Geo View"))
+		o = s:taboption("geoview", DummyValue, "_geoview_fieldset")
+		o.rawhtml = true
+		o.template = appname .. "/rule_list/geoview"
+	end
 end
 
-function m.on_before_save(self)
+m.on_before_save = function(self)
 	m:set("@global[0]", "flush_set", "1")
-end
-
-if api.is_js_luci() then
-	function m.on_before_save(self)
-		api.sh_uci_set(appname, "@global[0]", "flush_set", "1", true)
-	end
-	m.apply_on_parse = true
-	function m.on_apply(self)
-		luci.sys.call("/etc/init.d/passwall reload > /dev/null 2>&1 &")
-	end
 end
 
 return m

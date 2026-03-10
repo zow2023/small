@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (C) 2024-2025 Anya Lin <hukk1996@gmail.com>
+# Copyright (C) 2024-2026 Anya Lin <hukk1996@gmail.com>
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mihomo
-PKG_VERSION:=1.19.4
+PKG_VERSION:=1.19.20
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/metacubex/mihomo/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=06aaf2c04f3a13330e562ecb28f4edb101c56a45060b6e116a9683a87e78b6f5
+PKG_HASH:=e2c6b8a3a86d979a826c8e6dd36cf04148773931b75bac72069717d5297b640d
 
 PKG_MAINTAINER:=Anya Lin <hukk1996@gmail.com>
 PKG_LICENSE:=GPL-2.0
@@ -38,6 +38,8 @@ define Package/mihomo
   URL:=https://wiki.metacubex.one
   DEPENDS:=$(GO_ARCH_DEPENDS)
   PROVIDES:=mihomo
+  ALTERNATIVES:=\
+    100:/usr/bin/mihomo:/usr/libexec/mihomo-core
   USERID:=mihomo=7890:mihomo=7890
 endef
 
@@ -51,8 +53,8 @@ define Package/mihomo/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
 	$(CURDIR)/.prepare.sh $(VERSION) $(CURDIR) $(PKG_INSTALL_DIR)/usr/bin/$(PKG_NAME)
 
-	$(INSTALL_DIR) $(1)/usr/bin/
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/$(PKG_NAME) $(1)/usr/bin/
+	$(INSTALL_DIR) $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/$(PKG_NAME) $(1)/usr/libexec/mihomo-core
 endef
 
 $(eval $(call GoBinPackage,mihomo))

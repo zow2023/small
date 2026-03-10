@@ -1,8 +1,10 @@
 -- Licensed to the public under the GNU General Public License v3.
 require "luci.http"
 require "luci.sys"
+require "nixio.fs"
 require "luci.dispatcher"
 require "luci.model.uci"
+local cbi = require "luci.cbi"
 local uci = require "luci.model.uci".cursor()
 
 local m, s, o, node
@@ -10,7 +12,28 @@ local server_count = 0
 
 -- 确保正确判断程序是否存在
 local function is_finded(e)
-    return luci.sys.exec(string.format('type -t -p "%s" 2>/dev/null', e)) ~= ""
+	return luci.sys.exec(string.format('type -t -p "%s" 2>/dev/null', e)) ~= ""
+end
+
+local has_xray = is_finded("xray")
+local has_hysteria2 = is_finded("hysteria")
+
+local hy2_type_list = {}
+
+if has_xray then
+	table.insert(hy2_type_list, { id = "xray", name = translate("Xray") })
+end
+if has_hysteria2 then
+	table.insert(hy2_type_list, { id = "hysteria2", name = translate("Hysteria2") })
+end
+
+-- 如果用户没有手动设置，则自动选择
+if not xray_hy2_type or xray_hy2_type == "" then
+	if has_hysteria2 then
+		xray_hy2_type = "hysteria2"
+	elseif has_xray then
+		xray_hy2_type = "xray"
+	end
 end
 
 local has_ss_rust = is_finded("sslocal") or is_finded("ssserver")
@@ -19,19 +42,19 @@ local has_ss_libev = is_finded("ss-redir") or is_finded("ss-local")
 local ss_type_list = {}
 
 if has_ss_rust then
-    table.insert(ss_type_list, { id = "ss-rust", name = translate("ShadowSocks-rust Version") })
+	table.insert(ss_type_list, { id = "ss-rust", name = translate("ShadowSocks-rust Version") })
 end
 if has_ss_libev then
-    table.insert(ss_type_list, { id = "ss-libev", name = translate("ShadowSocks-libev Version") })
+	table.insert(ss_type_list, { id = "ss-libev", name = translate("ShadowSocks-libev Version") })
 end
 
 -- 如果用户没有手动设置，则自动选择
-if ss_type == "" then
-    if has_ss_rust then
-        ss_type = "ss-rust"
-    elseif has_ss_libev then
-        ss_type = "ss-libev"
-    end
+if not ss_type or ss_type == "" then
+	if has_ss_rust then
+		ss_type = "ss-rust"
+	elseif has_ss_libev then
+		ss_type = "ss-libev"
+	end
 end
 
 uci:foreach("shadowsocksr", "servers", function(s)
@@ -48,7 +71,7 @@ o = s:option(Flag, "auto_update", translate("Auto Update"))
 o.rmempty = false
 o.description = translate("Auto Update Server subscription, GFW list and CHN route")
 
-o = s:option(ListValue, "auto_update_week_time", translate("Update Time (Every Week)"))
+o = s:option(ListValue, "auto_update_week_time", translate("Update cycle (Day/Week)"))
 o:value('*', translate("Every Day"))
 o:value("1", translate("Every Monday"))
 o:value("2", translate("Every Tuesday"))
@@ -61,7 +84,7 @@ o.default = "*"
 o.rmempty = true
 o:depends("auto_update", "1")
 
-o = s:option(ListValue, "auto_update_day_time", translate("Update time (every day)"))
+o = s:option(ListValue, "auto_update_day_time", translate("Regular update (Hour)"))
 for t = 0, 23 do
 	o:value(t, t .. ":00")
 end
@@ -69,36 +92,60 @@ o.default = 2
 o.rmempty = true
 o:depends("auto_update", "1")
 
-o = s:option(ListValue, "auto_update_min_time", translate("Update Interval (min)"))
+o = s:option(ListValue, "auto_update_min_time", translate("Regular update (Min)"))
 for i = 0, 59 do
-    o:value(i, i .. ":00")
+	o:value(i, i .. ":00")
 end
 o.default = 30
 o.rmempty = true
 o:depends("auto_update", "1")
 
+-- 确保 hy2_type_list 不为空
+if #hy2_type_list > 0 then
+	o = s:option(ListValue, "xray_hy2_type", string.format("<b><span style='color:red;'>%s</span></b>", translatef("%s Node Use Type", "Hysteria2")))
+	o.description = translate("The configured type also applies to the core specified when manually importing nodes.")
+	for _, v in ipairs(hy2_type_list) do
+		o:value(v.id, v.name) -- 存储 "Xray" / "Hysteria2"，但 UI 显示完整名称
+	end
+	o.default = xray_hy2_type  -- 设置默认值
+	o.write = function(self, section, value)
+		-- 更新 Hysteria 节点的 xray_hy2_type
+		uci:foreach("shadowsocksr", "servers", function(s)
+			local node_type = uci:get("shadowsocksr", s[".name"], "type")  -- 获取节点类型
+			if node_type == "hysteria2" then  -- 仅修改 Hysteria 节点
+				local old_value = uci:get("shadowsocksr", s[".name"], "xray_hy2_type")
+				if old_value ~= value then
+					uci:set("shadowsocksr", s[".name"], "xray_hy2_type", value)
+				end
+			end
+		end)
+		-- 更新当前 section 的 xray_hy2_type
+		ListValue.write(self, section, value)
+	end
+end
+
 -- 确保 ss_type_list 不为空
 if #ss_type_list > 0 then
-    o = s:option(ListValue, "ss_type", string.format("<b><span style='color:red;'>%s</span></b>", translate("ShadowSocks Node Use Version")))
-    o.description = translate("Selection ShadowSocks Node Use Version.")
-    for _, v in ipairs(ss_type_list) do
-        o:value(v.id, v.name) -- 存储 "ss-libev" / "ss-rust"，但 UI 显示完整名称
-    end
-    o.default = ss_type  -- 设置默认值
-    o.write = function(self, section, value)
-        -- 更新 Shadowsocks 节点的 has_ss_type
-        uci:foreach("shadowsocksr", "servers", function(s)
-            local node_type = uci:get("shadowsocksr", s[".name"], "type")  -- 获取节点类型
-            if node_type == "ss" then  -- 仅修改 Shadowsocks 节点
-                local old_value = uci:get("shadowsocksr", s[".name"], "has_ss_type")
-                if old_value ~= value then
-                    uci:set("shadowsocksr", s[".name"], "has_ss_type", value)
-                end
-            end
-        end)
-        -- 更新当前 section 的 ss_type
-        Value.write(self, section, value)
-    end
+	o = s:option(ListValue, "ss_type", string.format("<b><span style='color:red;'>%s</span></b>", translatef("%s Node Use Version", "ShadowSocks")))
+	o.description = translate("Selection ShadowSocks Node Use Version.")
+	for _, v in ipairs(ss_type_list) do
+		o:value(v.id, v.name) -- 存储 "ss-libev" / "ss-rust"，但 UI 显示完整名称
+	end
+	o.default = ss_type  -- 设置默认值
+	o.write = function(self, section, value)
+		-- 更新 Shadowsocks 节点的 has_ss_type
+		uci:foreach("shadowsocksr", "servers", function(s)
+			local node_type = uci:get("shadowsocksr", s[".name"], "type")  -- 获取节点类型
+			if node_type == "ss" then  -- 仅修改 Shadowsocks 节点
+				local old_value = uci:get("shadowsocksr", s[".name"], "has_ss_type")
+				if old_value ~= value then
+					uci:set("shadowsocksr", s[".name"], "has_ss_type", value)
+				end
+			end
+		end)
+		-- 更新当前 section 的 ss_type
+		ListValue.write(self, section, value)
+	end
 end
 
 o = s:option(DynamicList, "subscribe_url", translate("Subscribe URL"))
@@ -117,6 +164,7 @@ o.inputstyle = "reload"
 o.description = translate("Update subscribe url list first")
 o.write = function()
 	uci:commit("shadowsocksr")
+	luci.sys.exec("rm -rf /tmp/sub_md5_*")
 	luci.http.redirect(luci.dispatcher.build_url("admin", "services", "shadowsocksr", "servers"))
 end
 
@@ -151,15 +199,26 @@ o.write = function()
 	end)
 	uci:save("shadowsocksr")
 	uci:commit("shadowsocksr")
+	for file in nixio.fs.glob("/tmp/sub_md5_*") do
+		nixio.fs.remove(file)
+	end
 	luci.http.redirect(luci.dispatcher.build_url("admin", "services", "shadowsocksr", "delete"))
 	return
 end
+
+o = s:option(Value, "user_agent", translate("User-Agent"))
+o.default = "v2rayN/9.99"
+o:value("curl", "Curl")
+o:value("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0", "Edge for Linux")
+o:value("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0", "Edge for Windows")
+o:value("v2rayN/9.99", "v2rayN")
 
 -- [[ Servers Manage ]]--
 s = m:section(TypedSection, "servers")
 s.anonymous = true
 s.addremove = true
 s.template = "cbi/tblsection"
+s:append(cbi.Template("shadowsocksr" .. "/optimize_cbi_ui"))
 s.sortable = true
 s.extedit = luci.dispatcher.build_url("admin", "services", "shadowsocksr", "servers", "%s")
 function s.create(...)
